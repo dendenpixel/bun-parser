@@ -1,9 +1,5 @@
-# Project
-project, bun_parser. 
+# BUN parser
 
-Tasks allocation spreadsheet:
-https://docs.google.com/spreadsheets/d/1X8TocJiEzL2VtqQRKWug4Q9oBugdCclkPkHXbsui2X8/edit?gid=0#gid=0
-
-
-Project set up: 
-https://docs.google.com/document/d/17DBO_G56AeHQVMXINHpcFUW8dg9kY16g_AWHqCXOgBo/edit?tab=t.0
+(replace with your own content. The README.md serves as an introduction to
+users of your software. The URL of your version control repository would
+be a good thing to include.)
