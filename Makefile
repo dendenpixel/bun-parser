@@ -10,7 +10,7 @@ LDFLAGS =
 #
 # CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g
 
-LIB     = bun_parse.c
+LIB     = bun_parse.c bun_string_table.c
 MAIN    = main.c
 TEST    = tests/test_bun.c
 

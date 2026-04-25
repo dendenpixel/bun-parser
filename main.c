@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "bun.h"
+#include "bun_string_table.h"
 
 // Print all violations collected so far (used on every exit path so the
 // user sees what went wrong, regardless of which stage failed).
@@ -73,6 +74,21 @@ int main(int argc, char *argv[]) {
     }
 
     result = bun_parse_assets(&ctx, &header);
+
+    // Validate and populate asset names from the string table.
+    // Run even if parse_assets returned non-OK so we report as many
+    // violations as possible (brief section 5.2d).
+    if (ctx.record_count > 0) {
+        bun_result_t str_result =
+            bun_validate_string_table(&ctx, &header,
+                                      ctx.records, (u32)ctx.record_count);
+        if (str_result == BUN_MALFORMED && result == BUN_OK) {
+            result = BUN_MALFORMED;
+        }
+        // Populate display names regardless of validation outcome so that
+        // print_asset can show whatever was readable.
+        bun_populate_names(&ctx, &header);
+    }
 
     // Brief: print violations on stderr (one per line) and as much of the
     // file as could be safely parsed on stdout. This applies on success
