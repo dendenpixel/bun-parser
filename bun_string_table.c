@@ -1,11 +1,45 @@
+#define _FILE_OFFSET_BITS 64
+
 #include "bun_string_table.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+// ================================================================
+// Internal helpers
+// ================================================================
 
 // Printable ASCII range per BUN spec section 6: 0x20 (space) .. 0x7E (~).
 static int is_printable_ascii(u8 b) {
     return b >= 0x20u && b <= 0x7Eu;
+}
+
+// Append a violation message to ctx->violations.
+// Mirrors the same helper in bun_parse.c so this module can report
+// violations without depending on bun_parse.c's internal statics.
+static void add_violation(BunParseContext *ctx, const char *msg) {
+    if (ctx->n_violations == ctx->cap_violations) {
+        size_t ncap = ctx->cap_violations ? ctx->cap_violations * 2 : 8;
+        char **nv = realloc(ctx->violations, ncap * sizeof(char *));
+        if (!nv) return;   // best-effort on OOM; never crash
+        ctx->violations = nv;
+        ctx->cap_violations = ncap;
+    }
+    char *copy = strdup(msg);
+    if (!copy) return;
+    ctx->violations[ctx->n_violations++] = copy;
+}
+
+static void add_violationf(BunParseContext *ctx, const char *fmt, ...) {
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    add_violation(ctx, buf);
 }
 
 // Compute the absolute file offset of an asset name and verify that
@@ -39,6 +73,10 @@ static int compute_name_file_offset(
     return 1;
 }
 
+// ================================================================
+// Public API
+// ================================================================
+
 bun_result_t bun_validate_asset_name(
     BunParseContext      *ctx,
     const BunHeader      *header,
@@ -49,7 +87,7 @@ bun_result_t bun_validate_asset_name(
         return BUN_MALFORMED;
     }
 
-    // Rule 2: the name must lie inside the string table.
+    // Rule 2: the name must lie inside the string table (no overflow).
     u64 file_offset;
     u64 name_end_in_table;
     if (!compute_name_file_offset(header, record,
@@ -60,9 +98,10 @@ bun_result_t bun_validate_asset_name(
         return BUN_MALFORMED;
     }
 
-    // Independent check: the string table itself must lie in the file.
-    // The header validator should already guarantee this, but this keeps
-    // the function safe to call without assuming the header was checked.
+    // Defensive: absolute end must also lie within the file.
+    // (The header validator should guarantee string_table_offset +
+    // string_table_size <= file_size, but we check here so this function
+    // is safe to call independently.)
     if (ctx->file_size < 0) {
         return BUN_ERR_IO;
     }
@@ -72,7 +111,7 @@ bun_result_t bun_validate_asset_name(
     }
 
     // Rule 3: stream-validate every byte as printable ASCII.
-    if (fseek(ctx->file, (long)file_offset, SEEK_SET) != 0) {
+    if (fseeko(ctx->file, (off_t)file_offset, SEEK_SET) != 0) {
         return BUN_ERR_IO;
     }
     u8 buf[256];
@@ -102,15 +141,74 @@ bun_result_t bun_validate_string_table(
     u32                   asset_count)
 {
     if (records == NULL && asset_count > 0) {
+        add_violation(ctx, "string table: records array is NULL");
         return BUN_MALFORMED;
     }
+
+    bun_result_t worst = BUN_OK;
+
     for (u32 i = 0; i < asset_count; i++) {
-        bun_result_t r = bun_validate_asset_name(ctx, header, &records[i]);
-        if (r != BUN_OK) {
-            return r;
+        const BunAssetRecord *r = &records[i];
+        bun_result_t result = bun_validate_asset_name(ctx, header, r);
+
+        if (result == BUN_OK) continue;
+
+        // Report a specific violation message for this asset.
+        if (r->name_length == 0) {
+            add_violationf(ctx, "asset[%u]: name_length is zero "
+                           "(spec section 6: names must be non-zero length)", i);
+        } else {
+            u64 end = (u64)r->name_offset + (u64)r->name_length;
+            if (end > header->string_table_size) {
+                add_violationf(ctx,
+                    "asset[%u]: name range [%u+%u=%llu] exceeds "
+                    "string_table_size %llu (spec section 6)",
+                    i, r->name_offset, r->name_length,
+                    (unsigned long long)end,
+                    (unsigned long long)header->string_table_size);
+            } else {
+                add_violationf(ctx,
+                    "asset[%u]: name contains non-printable character "
+                    "(spec section 6: names must be printable ASCII 0x20-0x7E)", i);
+            }
         }
+
+        if (result == BUN_ERR_IO) return BUN_ERR_IO;  // I/O failure: stop now
+        worst = BUN_MALFORMED;
     }
-    return BUN_OK;
+
+    return worst;
+}
+
+bun_result_t bun_populate_names(
+    BunParseContext *ctx,
+    const BunHeader *header)
+{
+    if (ctx->record_count == 0) return BUN_OK;
+    if (!ctx->records) return BUN_ERR_IO;
+
+    // Allocate the names array. bun_close() is responsible for freeing it.
+    ctx->names = calloc(ctx->record_count, sizeof(char *));
+    if (!ctx->names) return BUN_ERR_IO;
+
+    // Brief section 5.2b: display the first ~60 characters of each name.
+    char buf[61];
+    bun_result_t worst = BUN_OK;
+
+    for (size_t i = 0; i < ctx->record_count; i++) {
+        bun_result_t r = bun_read_asset_name_prefix(
+            ctx, header, &ctx->records[i], buf, sizeof(buf));
+        if (r != BUN_OK) {
+            ctx->names[i] = NULL;
+            if (r == BUN_ERR_IO) return BUN_ERR_IO;
+            worst = BUN_MALFORMED;
+            continue;
+        }
+        ctx->names[i] = strdup(buf);
+        if (!ctx->names[i]) return BUN_ERR_IO;   // OOM
+    }
+
+    return worst;
 }
 
 bun_result_t bun_read_asset_name_prefix(
@@ -137,7 +235,7 @@ bun_result_t bun_read_asset_name_prefix(
         to_read = out_size - 1;
     }
 
-    if (fseek(ctx->file, (long)file_offset, SEEK_SET) != 0) {
+    if (fseeko(ctx->file, (off_t)file_offset, SEEK_SET) != 0) {
         return BUN_ERR_IO;
     }
     if (fread(out, 1, to_read, ctx->file) != to_read) {

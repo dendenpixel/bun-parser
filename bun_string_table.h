@@ -43,8 +43,9 @@ bun_result_t bun_validate_asset_name(
 /**
  * Validate every asset name in `records[0..asset_count)`.
  *
- * Stops and returns at the first non-OK result. A return of BUN_OK means
- * every name satisfies the spec.
+ * Checks all names even after a failure, appending one violation message
+ * per bad name to ctx->violations. Returns BUN_OK only if every name
+ * is valid, BUN_MALFORMED if any fail, BUN_ERR_IO on I/O error.
  */
 bun_result_t bun_validate_string_table(
     BunParseContext      *ctx,
@@ -69,5 +70,22 @@ bun_result_t bun_read_asset_name_prefix(
     const BunAssetRecord *record,
     char                 *out,
     size_t                out_size);
+
+/**
+ * Populate ctx->names with a display-ready prefix of each asset name.
+ *
+ * Must be called after bun_parse_assets() has populated ctx->records.
+ * Allocates ctx->names as an array of ctx->record_count heap strings,
+ * each holding up to 60 characters of the corresponding asset name
+ * (null-terminated). Entries are NULL for names that could not be read.
+ *
+ * bun_close() will free ctx->names and each entry.
+ *
+ * Returns BUN_OK if all names were read, BUN_MALFORMED if any failed,
+ * BUN_ERR_IO on allocation failure or I/O error.
+ */
+bun_result_t bun_populate_names(
+    BunParseContext *ctx,
+    const BunHeader *header);
 
 #endif // BUN_STRING_TABLE_H
