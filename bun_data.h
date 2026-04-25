@@ -3,6 +3,13 @@
 
 #include "bun.h"
 
+typedef struct {
+    u8     preview[60];
+    size_t preview_len;
+    int    is_printable;
+    char   error[256];
+} BunAssetDataResult;
+
 /**
  * Read, validate, and display the data for a single asset.
  * Handles uncompressed and RLE-compressed data.
