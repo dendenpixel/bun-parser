@@ -1,6 +1,5 @@
 #define _FILE_OFFSET_BITS 64
 #define _POSIX_C_SOURCE 200809L
-#define _FILE_OFFSET_BITS 64
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,9 +8,9 @@
 #include <stdint.h>
 #include <assert.h>
 
-
 #include "bun.h"
 #include "bun_string_table.h"
+
 // ================================================================
 // Shared helpers
 // ================================================================
