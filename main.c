@@ -33,7 +33,15 @@ int main(int argc, char *argv[]) {
   // TODO: on BUN_OK, print human-readable summary to stdout.
   //     on BUN_MALFORMED / BUN_UNSUPPORTED, print violation list to stderr.
   //     See project brief for output requirements.
-
+  printf("=== BUN Header ===\n");
+  printf("magic:                0x%08X\n", header.magic);
+  printf("version:              %u.%u\n",  header.version_major, header.version_minor);
+  printf("asset_count:          %u\n",     header.asset_count);
+  printf("asset_table_offset:   %llu\n",   (unsigned long long)header.asset_table_offset);
+  printf("string_table_offset:  %llu\n",   (unsigned long long)header.string_table_offset);
+  printf("string_table_size:    %llu\n",   (unsigned long long)header.string_table_size);
+  printf("data_section_offset:  %llu\n",   (unsigned long long)header.data_section_offset);
+  printf("data_section_size:    %llu\n",   (unsigned long long)header.data_section_size);
   bun_close(&ctx);
   return result;
 }

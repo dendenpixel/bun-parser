@@ -38,6 +38,19 @@ typedef uint64_t u64;
 #define BUN_FLAG_ENCRYPTED  0x1u
 #define BUN_FLAG_EXECUTABLE 0x2u
 
+// Requirement of 4.1.1 —structure defines three offsets.
+typedef struct {
+    u32 magic;
+    u16 version_major;
+    u16 version_minor;
+    u32 asset_count;
+    u64 asset_table_offset;
+    u64 string_table_offset;
+    u64 string_table_size;
+    u64 data_section_offset;
+    u64 data_section_size;
+    u64 reserved;
+} BunHeader;
 typedef struct {
     u32 magic;
     u16 version_major;
@@ -83,6 +96,7 @@ typedef struct {
     FILE   *file;           // open file handle
     long    file_size;      // total file size in bytes
     // add further fields here as needed
+    char   error_msg[256];
 } BunParseContext;
 
 //

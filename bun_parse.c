@@ -9,11 +9,24 @@
  * Example helper: convert 4 bytes in `buf`, positioned at `offset`,
  * into a little-endian u32.
  */
+
+ static u16 read_u16_le(const u8 *buf, size_t offset) {
+    return (u16)(buf[offset] | (unsigned)buf[offset + 1] << 8);
+}
+
 static u32 read_u32_le(const u8 *buf, size_t offset) {
   return (u32)buf[offset]
      | (u32)buf[offset + 1] << 8
      | (u32)buf[offset + 2] << 16
      | (u32)buf[offset + 3] << 24;
+}
+
+static u64 read_u64_le(const u8 *buf, size_t offset) {
+    u64 v = 0;
+    for (int i = 0; i < 8; i++) {
+        v |= (u64)buf[offset + i] << (i * 8);
+    }
+    return v;
 }
 
 //
@@ -45,29 +58,82 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
 
 bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
   u8 buf[BUN_HEADER_SIZE];
-
-  // our file is far too short, and cannot be valid!
-  // (query: how do we let `main` know that "file was too short"
-  // was the exact problem? Where can we put details about the
-  // exact validation problem that occurred?)
+  // file too short to even hold a header
   if (ctx->file_size < (long)BUN_HEADER_SIZE) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+        "File too short: %ld bytes, need at least %d for header",
+        ctx->file_size, BUN_HEADER_SIZE);
     return BUN_MALFORMED;
   }
 
   // slurp the header into `buf`
   if (fread(buf, 1, BUN_HEADER_SIZE, ctx->file) != BUN_HEADER_SIZE) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+        "Failed to read header from file");
     return BUN_ERR_IO;
   }
 
-  // TODO: populate `header` from `buf`.
+  // pull fields out of raw bytes — can't memcpy, struct padding != on-disk layout
+  header->magic               = read_u32_le(buf, 0);
+  header->version_major       = read_u16_le(buf, 4);
+  header->version_minor       = read_u16_le(buf, 6);
+  header->asset_count         = read_u32_le(buf, 8);
+  header->asset_table_offset  = read_u64_le(buf, 12);
+  header->string_table_offset = read_u64_le(buf, 20);
+  header->string_table_size   = read_u64_le(buf, 28);
+  header->data_section_offset = read_u64_le(buf, 36);
+  header->data_section_size   = read_u64_le(buf, 44);
+  header->reserved            = read_u64_le(buf, 52); // Requirement of 4.1.6 — reserved for future expansion, no checks for now.
 
-  // TODO: validate fields and return BUN_MALFORMED or BUN_UNSUPPORTED
-  // as required by the spec. The magic check is a good place to start.
-
+  // Requirement of 9.1 and 4.1.5 — magic must be exactly BUN_MAGIC
   if (header->magic != BUN_MAGIC) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+        "Bad magic: got 0x%08X, expected 0x%08X",
+        header->magic, BUN_MAGIC);
     return BUN_MALFORMED;
   }
 
+  // Requirement of 4.1.7 — version must be exactly 1 and 0; if not, return BUN_UNSUPPORTED
+  if (header->version_major != BUN_VERSION_MAJOR ||
+      header->version_minor != BUN_VERSION_MINOR) {
+      snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+        "Unsupported version: %u.%u (expected %d.%d)",
+        header->version_major, header->version_minor,
+        BUN_VERSION_MAJOR, BUN_VERSION_MINOR);
+      return BUN_UNSUPPORTED;
+  }
+
+  // Requirement of 4.1.3 — Must be divisible by 4; we check this for all 4 fields that specify offsets/sizes
+  if (header->asset_table_offset % 4 != 0) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+      "asset_table_offset (%llu) not divisible by 4",
+      (unsigned long long)header->asset_table_offset);
+    return BUN_MALFORMED;
+  }
+  if (header->string_table_offset % 4 != 0) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+        "string_table_offset (%llu) not divisible by 4",
+        (unsigned long long)header->string_table_offset);
+    return BUN_MALFORMED;
+  }
+  if (header->string_table_size % 4 != 0) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+      "string_table_size (%llu) not divisible by 4",
+      (unsigned long long)header->string_table_size);
+    return BUN_MALFORMED;
+  }
+  if (header->data_section_offset % 4 != 0) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+      "data_section_offset (%llu) not divisible by 4",
+      (unsigned long long)header->data_section_offset);
+    return BUN_MALFORMED;
+  }
+  if (header->data_section_size % 4 != 0) {
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+      "data_section_size (%llu) not divisible by 4",
+      (unsigned long long)header->data_section_size);
+    return BUN_MALFORMED;
+  }
   return BUN_OK;
 }
 
