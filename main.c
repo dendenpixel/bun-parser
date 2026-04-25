@@ -29,11 +29,27 @@ int main(int argc, char *argv[]) {
   }
 
   result = bun_parse_assets(&ctx, &header);
+// print violations (if any) to stderr
+    for (size_t i = 0; i < ctx.n_violations; i++) {
+        fprintf(stderr, "violation: %s\n", ctx.violations[i]);
+    }
 
-  // TODO: on BUN_OK, print human-readable summary to stdout.
-  //     on BUN_MALFORMED / BUN_UNSUPPORTED, print violation list to stderr.
-  //     See project brief for output requirements.
+    // print what we did parse to stdout — even on failure, per the brief
+    printf("BUN header:\n");
+    printf("  magic               = 0x%08x\n", header.magic);
+    printf("  version             = %u.%u\n", header.version_major, header.version_minor);
+    printf("  asset_count         = %u\n", header.asset_count);
+    printf("  asset_table_offset  = %llu\n", (unsigned long long)header.asset_table_offset);
+    // ... rest of header fields
 
+    for (size_t i = 0; i < ctx.record_count; i++) {
+        const BunAssetRecord *r = &ctx.records[i];
+        printf("\nasset %zu:\n", i);
+        printf("  name        = %s\n", ctx.names[i] ? ctx.names[i] : "(invalid)");
+        printf("  data_size   = %llu\n", (unsigned long long)r->data_size);
+        printf("  compression = %u\n", r->compression);
+        // ... etc
+    }
   bun_close(&ctx);
   return result;
 }

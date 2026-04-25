@@ -37,6 +37,7 @@ typedef uint64_t u64;
 
 #define BUN_FLAG_ENCRYPTED  0x1u
 #define BUN_FLAG_EXECUTABLE 0x2u
+#define BUN_MAX_NAME_LEN (64 * 1024) 
 
 typedef struct {
     u32 magic;
@@ -80,9 +81,18 @@ typedef struct {
 //
 
 typedef struct {
-    FILE   *file;           // open file handle
-    long    file_size;      // total file size in bytes
-    // add further fields here as needed
+    FILE   *file;
+    long    file_size;
+
+    BunAssetRecord *records;       // array, length = record_count
+    char          **names;         // parallel array of C strings (may contain NULLs
+                                   // for records whose name was invalid)
+    size_t          record_count;
+
+    // violation reporting
+    char          **violations;
+    size_t          n_violations;
+    size_t          cap_violations;
 } BunParseContext;
 
 //
@@ -128,7 +138,6 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header);
  * records to the caller.
  */
 bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header);
-
 /**
  * Close the file handle in ctx. Must only be called on a BunParseContext
  * holding an open FILE*. Returns BUN_OK on success, BUN_ERR_IO on error.
