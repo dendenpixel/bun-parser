@@ -13,12 +13,19 @@ bun_result_t bun_process_asset_data(BunParseContext *ctx, const BunHeader *heade
     memset(out, 0, sizeof(*out));
 
     // validate data lies within data section bounds
-    if (record->data_size > header->data_section_size ||
-        record->data_offset > header->data_section_size - record->data_size) {
+    // written as direct addition per spec wording: data_offset + data_size <= data_section_size
+    if (record->data_offset + record->data_size > header->data_section_size) {
         snprintf(out->error, sizeof(out->error),
                 "asset data out of bounds: offset %lu + size %lu exceeds data section size %lu",
                 record->data_offset, record->data_size, header->data_section_size);
         return BUN_MALFORMED;
+    }
+
+    // validate flags field - only bits 0x1 and 0x2 are permitted
+    if (record->flags & ~(BUN_FLAG_ENCRYPTED | BUN_FLAG_EXECUTABLE)) {
+        snprintf(out->error, sizeof(out->error),
+                "unsupported flags value: 0x%x", record->flags);
+        return BUN_UNSUPPORTED;
     }
 
     // validate checksum field
@@ -119,6 +126,14 @@ bun_result_t bun_process_asset_data(BunParseContext *ctx, const BunHeader *heade
 
                 decompressed_total += count;
 
+                // early exit if decompressed size already exceeds what record claims
+                if (decompressed_total > record->uncompressed_size) {
+                    snprintf(out->error, sizeof(out->error),
+                            "RLE decompressed size exceeds expected %lu (possible RLE bomb)",
+                            record->uncompressed_size);
+                    return BUN_MALFORMED;
+                }
+
                 // collect first 60 decompressed bytes for preview
                 for (u8 j = 0; j < count && out->preview_len < 60; j++) {
                     out->preview[out->preview_len++] = value;
@@ -128,7 +143,7 @@ bun_result_t bun_process_asset_data(BunParseContext *ctx, const BunHeader *heade
             remaining -= n;
         }
 
-        // verify decompressed size matches record
+        // verify decompressed size matches record exactly
         if (decompressed_total != record->uncompressed_size) {
             snprintf(out->error, sizeof(out->error),
                     "RLE decompressed size %lu does not match expected %lu",
