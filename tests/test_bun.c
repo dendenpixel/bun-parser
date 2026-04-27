@@ -167,7 +167,7 @@ END_TEST
 START_TEST(test_stringtable_valid_single_name) {
     char buffer[] = "hello";
     FILE *f = fmemopen(buffer, 5, "rb");
-    ck_assert_ptr_nonnull(f);
+    ck_assert_ptr_ne(f, NULL);
 
     BunParseContext ctx = { .file = f, .file_size = 5 };
     BunHeader header = {
@@ -355,7 +355,7 @@ START_TEST(test_open_nonexistent_file) {
         "tests/fixtures/this/path/definitely/does/not/exist.bun", &ctx);
     ck_assert_int_eq(r, BUN_ERR_NOT_FOUND);
     // ctx->file should still be NULL after a failed open.
-    ck_assert_ptr_null(ctx.file);
+    ck_assert_ptr_eq(ctx.file, NULL);
 }
 END_TEST
 
@@ -506,7 +506,7 @@ START_TEST(test_dos_cap_excessive_asset_count) {
     ck_assert_int_eq(r, BUN_UNSUPPORTED);
     // ctx->records must NOT have been allocated -- the whole point is to
     // refuse before calloc().
-    ck_assert_ptr_null(ctx.records);
+    ck_assert_ptr_eq(ctx.records, NULL);
 
     fclose(f);
     bun_close(&ctx);
@@ -584,7 +584,9 @@ START_TEST(test_data_preview_printable_uncompressed) {
     ck_assert_int_eq(r, BUN_OK);
     ck_assert_uint_eq(dres.preview_len, 11);
     ck_assert_int_eq(dres.is_printable, 1);
-    ck_assert_mem_eq(dres.preview, "hello world", 11);
+    // Older libcheck (e.g., Ubuntu 20.04's 0.10.x) lacks ck_assert_mem_eq;
+    // memcmp + ck_assert_int_eq is portable and gives the same guarantee.
+    ck_assert_int_eq(memcmp(dres.preview, "hello world", 11), 0);
 
     fclose(f);
     bun_close(&ctx);
