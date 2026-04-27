@@ -35,12 +35,18 @@ static u64 read_u64_le(const u8 *buf, size_t offset) {
     return v;
 }
 
-// 9.3 Requirements: no overlap
-// We have already bounded it against the file size (fsize in this case), sum can't wrap.
+// Spec 9.3: no two sections may overlap.
+//
+// Wraparound-safe: instead of computing offset1 + size1 (which can wrap when
+// callers pass values that already failed the 9.2 bounds check), compare the
+// gap between the two offsets against the size of the lower section.
 static int sections_overlap(u64 offset1, u64 size1, u64 offset2, u64 size2) {
-    if (size1 == 0 || size2 == 0) 
-        return 0;  // empty ranges don't overlap
-    return !(offset1 + size1 <= offset2 || offset2 + size2 <= offset1);
+    if (size1 == 0 || size2 == 0) return 0;   // empty ranges don't overlap
+    if (offset1 < offset2) {
+        return (offset2 - offset1) < size1;
+    } else {
+        return (offset1 - offset2) < size2;
+    }
 }
 
 // Append a violation message to the context. Used directly for fixed strings.
@@ -68,7 +74,8 @@ static void add_violationf(BunParseContext *ctx, const char *fmt, ...) {
 }
 
 // Escalate worst-result-so-far. MALFORMED beats UNSUPPORTED beats OK.
-// IO errors are not ranked within, caller returns on BUN_ERR_IO early.
+// BUN_ERR_IO and BUN_ERR_NOT_FOUND are not ranked here; callers must
+// return early on those (they're terminal conditions, not parse outcomes).
 static void escalate(bun_result_t *status, bun_result_t new_status) {
     if (new_status == BUN_MALFORMED) {
         *status = BUN_MALFORMED;
@@ -88,6 +95,10 @@ static int safe_seek(FILE *f, u64 pos) {
 // ================================================================
 
 bun_result_t bun_open(const char *path, BunParseContext *ctx) {
+    // Reset errno explicitly: POSIX guarantees fopen sets errno on failure,
+    // but zeroing first prevents a stale value from being misread if some
+    // future change ever inspects errno without checking the return first.
+    errno = 0;
     ctx->file = fopen(path, "rb");
     if (!ctx->file) {
         if (errno == ENOENT) return BUN_ERR_NOT_FOUND;
@@ -434,7 +445,12 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
 
     if (header->asset_count == 0) return BUN_OK;
 
-    #define BUN_MAX_RECORDS 1000000u
+    // DoS protection: a hostile file could declare asset_count = UINT32_MAX,
+    // which would request ~206 GB from calloc (4.3e9 records * 48 bytes).
+    // Without a cap, the system either OOMs or, with overcommit, succeeds
+    // and crashes on first access. 1M records is 48 MB, which is plenty for
+    // any realistic asset bundle. Returns UNSUPPORTED rather than MALFORMED
+    // because the file may be structurally valid -- we just refuse to load it.
     if (header->asset_count > BUN_MAX_RECORDS) {
         add_violationf(ctx,
             "asset_count %u exceeds parser limit %u (DoS protection)",
@@ -442,15 +458,6 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         return BUN_UNSUPPORTED;
     }
 
-    #define BUN_MAX_RECORDS 1000000u   // 1M records = 56 MB in memory
-
-    if (header->asset_count > BUN_MAX_RECORDS) {
-        add_violationf(ctx,
-            "asset_count %u exceeds parser limit %u",
-            header->asset_count, BUN_MAX_RECORDS);
-        return BUN_UNSUPPORTED;   // not malformed — file may be valid, we just won't load it
-    }
-    
     ctx->records = calloc(header->asset_count, sizeof(BunAssetRecord));
     if (!ctx->records) return BUN_ERR_IO;
     ctx->record_count = header->asset_count;

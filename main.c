@@ -4,7 +4,7 @@
 #include "bun.h"
 #include "bun_string_table.h"
 #include "bun_data.h"
- 
+
 // Print all violations collected so far (used on every exit path so the
 // user sees what went wrong, regardless of which stage failed).
 static void print_violations(const BunParseContext *ctx) {
@@ -47,10 +47,15 @@ static bun_result_t print_asset(size_t i, BunParseContext *ctx,
     printf("  flags             = 0x%08x\n", r->flags);
 
     // Process + preview the data section for this asset.
+    // Brief 5.2d: print as much as we can, even on partial failure.
+    // Don't bail mid-asset -- finish the asset's stdout block, report the
+    // failure on stderr, and propagate the result code so main() can
+    // escalate it.
     BunAssetDataResult dres = {0};
     bun_result_t dr = bun_process_asset_data(ctx, header, r, &dres);
     if (dr != BUN_OK) {
         fprintf(stderr, "violation: asset[%zu]: %s\n", i, dres.error);
+        printf("  data_preview      = (unavailable)\n");
         return dr;
     }
     printf("  data_preview      = ");
