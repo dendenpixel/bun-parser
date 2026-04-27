@@ -81,7 +81,7 @@ typedef struct {
 
 typedef struct {
     FILE   *file;            // open file handle
-    long    file_size;       // total file size in bytes
+    u64    file_size;       // total file size in bytes
 
     // Asset records (populated by bun_parse_assets).
     BunAssetRecord *records;

@@ -34,6 +34,14 @@ static u64 read_u64_le(const u8 *buf, size_t offset) {
     return v;
 }
 
+// 9.3 Requirements: no overlap
+// We have already bounded it against the file size (fsize in this case), sum can't wrap.
+static int ranges_overlap(u64 offset1, u64 size1, u64 offset2, u64 size2) {
+    if (size1 == 0 || size2 == 0) 
+        return 0;  // empty ranges don't overlap
+    return !(offset1 + size1 <= offset2 || offset2 + size2 <= offset1);
+}
+
 // Append a violation message to the context. Used directly for fixed strings.
 static void add_violation(BunParseContext *ctx, const char *msg) {
     if (ctx->n_violations == ctx->cap_violations) {
@@ -95,7 +103,7 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
         ctx->file = NULL;
         return BUN_ERR_IO;
     }
-    ctx->file_size = (long)sz;   // TODO: widen to u64 once header path also uses u64
+    ctx->file_size = (u64)sz;   // TODO: widen to u64 once header path also uses u64
 
     rewind(ctx->file);
     return BUN_OK;
@@ -141,10 +149,10 @@ bun_result_t bun_close(BunParseContext *ctx) {
 bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     u8 buf[BUN_HEADER_SIZE];
 
-    if (ctx->file_size < (long)BUN_HEADER_SIZE) {
+    if (ctx->file_size < BUN_HEADER_SIZE) {
         add_violationf(ctx,
-            "file too short: %ld bytes, need at least %d for header",
-            ctx->file_size, BUN_HEADER_SIZE);
+            "file too short: %llu bytes, need at least %d for header",
+            (unsigned long long)ctx->file_size, BUN_HEADER_SIZE);
         return BUN_MALFORMED;
     }
 
@@ -221,7 +229,51 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
     }
 
     // TODO (header owner): 9.2 sections within file bounds, 9.3 no overlap.
+    u64 fsize = ctx->file_size;
+    u64 asset_table_size = (u64)header->asset_count * (u64)BUN_ASSET_RECORD_SIZE;
+    if (header->asset_table_offset > fsize || asset_table_size > fsize - header->asset_table_offset) {
+        add_violationf(ctx,
+            "asset table (offset %llu, size %llu) extends past end of file (%llu)",
+            (unsigned long long)header->asset_table_offset,
+            (unsigned long long)asset_table_size,
+            (unsigned long long)fsize);
+        escalate(&worst, BUN_MALFORMED);
+    }
 
+    if (header->string_table_offset > fsize || header->string_table_size > fsize - header->string_table_offset) {
+        add_violationf(ctx,
+            "string table (offset %llu, size %llu) extends past end of file (%llu)",
+            (unsigned long long)header->string_table_offset,
+            (unsigned long long)header->string_table_size,
+            (unsigned long long)fsize);
+        escalate(&worst, BUN_MALFORMED);
+    }
+    if (header->data_section_offset > fsize || header->data_section_size > fsize - header->data_section_offset) {
+        add_violationf(ctx,
+            "data section (offset %llu, size %llu) extends past end of file (%llu)",
+            (unsigned long long)header->data_section_offset,
+            (unsigned long long)header->data_section_size,
+            (unsigned long long)fsize);
+        escalate(&worst, BUN_MALFORMED);
+    }
+
+    struct { const char *name; u64 off, thesize; } secs[] = {
+        { "header",                                 0,           BUN_HEADER_SIZE },
+        { "asset table",   header->asset_table_offset,          asset_table_size },
+        { "string table", header->string_table_offset, header->string_table_size },
+        { "data section", header->data_section_offset, header->data_section_size },
+    };
+
+    for (size_t i = 0; i < 4; i++) {
+        for (size_t j = i + 1; j < 4; j++) {
+            if (sections_overlap(secs[i].off, secs[i].thesize,
+                                secs[j].off, secs[j].thesize)) {
+                add_violationf(ctx, "%s overlaps with %s",
+                            secs[i].name, secs[j].name);
+                escalate(&worst, BUN_MALFORMED);
+            }
+        }
+    }
     return worst;
 }
 
@@ -364,10 +416,10 @@ static bun_result_t read_record_bytes(BunParseContext *ctx,
     u64 pos = header->asset_table_offset + row;
 
     if (pos > UINT64_MAX - BUN_ASSET_RECORD_SIZE ||
-        pos + BUN_ASSET_RECORD_SIZE > (u64)ctx->file_size) {
+        pos + BUN_ASSET_RECORD_SIZE > ctx->file_size) {
         add_violationf(ctx,
-            "asset[%u]: record would read past end of file (pos=%llu, size=%lld)",
-            index, (unsigned long long)pos, (long long)ctx->file_size);
+            "asset[%u]: record would read past end of file (pos=%llu, size=%llu)",
+            index, (unsigned long long)pos, (unsigned long long)ctx->file_size);
         return BUN_MALFORMED;
     }
 
@@ -392,7 +444,7 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         add_violation(ctx, "asset table end overflows u64");
         return BUN_MALFORMED;
     }
-    if (header->asset_table_offset + table_bytes > (u64)ctx->file_size) {
+    if (header->asset_table_offset + table_bytes > ctx->file_size) {
         add_violation(ctx, "asset table extends past end of file");
         return BUN_MALFORMED;
     }
