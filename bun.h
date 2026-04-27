@@ -5,12 +5,13 @@
 #include <stdio.h>
 
 typedef enum {
-    BUN_OK          = 0,
-    BUN_MALFORMED   = 1,
-    BUN_UNSUPPORTED = 2,
-    BUN_ERR_IO      = 3,   /* I/O error or file not found -- additional codes
-                              in the range 3-10 may be added; document them
-                              in the report */
+    BUN_OK            = 0,
+    BUN_MALFORMED     = 1,
+    BUN_UNSUPPORTED   = 2,
+    BUN_ERR_IO        = 3,   /* generic I/O error */
+    BUN_ERR_NOT_FOUND = 4    /* file does not exist (errno == ENOENT at open) */
+    /* Additional codes in the range 3-10 may be added; document them
+       in the report. */
 } bun_result_t;
 
 //
@@ -36,6 +37,11 @@ typedef uint64_t u64;
 
 // Sanity cap on asset name length when the string-table module reads them.
 #define BUN_MAX_NAME_LEN  (64u * 1024u)
+
+// DoS-protection cap on the number of asset records the parser will load.
+// 1,000,000 records * 48 bytes per record = ~48 MB of in-memory state.
+// Files that exceed this are reported as BUN_UNSUPPORTED.
+#define BUN_MAX_RECORDS   1000000u
 
 // Spec section 4 - BUN file header.
 typedef struct {
@@ -81,7 +87,7 @@ typedef struct {
 
 typedef struct {
     FILE   *file;            // open file handle
-    long    file_size;       // total file size in bytes
+    u64    file_size;       // total file size in bytes
 
     // Asset records (populated by bun_parse_assets).
     BunAssetRecord *records;

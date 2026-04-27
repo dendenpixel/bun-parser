@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -std=c11 -Wall -Wextra -Wpedantic
+CFLAGS  = -std=c11 -Wall -Wextra -Wpedantic -D_POSIX_C_SOURCE=200809L
 
 # Flags passed to the linker. You will likely need to define this if you use
 # additional libraries.
@@ -10,7 +10,7 @@ LDFLAGS =
 #
 # CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g
 
-LIB     = bun_parse.c bun_string_table.c
+LIB     = bun_parse.c bun_string_table.c bun_data.c
 MAIN    = main.c
 TEST    = tests/test_bun.c
 
