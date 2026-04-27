@@ -37,7 +37,7 @@ static u64 read_u64_le(const u8 *buf, size_t offset) {
 
 // 9.3 Requirements: no overlap
 // We have already bounded it against the file size (fsize in this case), sum can't wrap.
-static int sections_overlaps(u64 offset1, u64 size1, u64 offset2, u64 size2) {
+static int sections_overlap(u64 offset1, u64 size1, u64 offset2, u64 size2) {
     if (size1 == 0 || size2 == 0) 
         return 0;  // empty ranges don't overlap
     return !(offset1 + size1 <= offset2 || offset2 + size2 <= offset1);
