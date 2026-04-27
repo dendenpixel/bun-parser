@@ -14,7 +14,7 @@ LIB     = bun_parse.c bun_string_table.c bun_data.c
 MAIN    = main.c
 TEST    = tests/test_bun.c
 
-.PHONY: all test clean fixtures
+.PHONY: all test samples-test clean
 
 all: bun_parser
 
@@ -29,22 +29,40 @@ test: tests/test_runner
 tests/test_runner: $(TEST) $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $$(pkg-config --cflags --libs check)
 
-# Regenerate the test fixtures used by the header-tests TCase. The fixtures
-# are committed to the repo so 'make test' works out of the box; this target
-# only needs to be run if you change bunfile_generator.py or want to verify
-# the fixtures are reproducible. Overwrites any existing files in
-# tests/fixtures/{valid,invalid}/.
-fixtures:
-	mkdir -p tests/fixtures/valid tests/fixtures/invalid
-	python3 bunfile_generator.py
-	mv minimal.bun tests/fixtures/valid/01-empty.bun
-	cp tests/fixtures/valid/01-empty.bun tests/fixtures/invalid/01-bad-magic.bun
-	printf '\xDE\xAD\xBE\xEF' | dd of=tests/fixtures/invalid/01-bad-magic.bun \
-	    bs=1 count=4 conv=notrunc 2>/dev/null
-	cp tests/fixtures/valid/01-empty.bun tests/fixtures/invalid/02-bad-version.bun
-	printf '\x99\x00' | dd of=tests/fixtures/invalid/02-bad-version.bun \
-	    bs=1 seek=4 count=2 conv=notrunc 2>/dev/null
-	@echo "Regenerated fixtures in tests/fixtures/{valid,invalid}/"
+# End-to-end CLI sweep over the provided sample files in
+# tests/fixtures/{valid,invalid}/. Every valid sample must exit 0;
+# every invalid sample must exit 1 (MALFORMED) or 2 (UNSUPPORTED).
+# Returns non-zero if any file produces an unexpected exit code.
+samples-test: bun_parser
+	@echo "=== VALID samples (expect exit 0) ==="; \
+	pass=0; fail=0; \
+	for f in tests/fixtures/valid/*.bun; do \
+	    ./bun_parser "$$f" > /dev/null 2>&1; \
+	    code=$$?; \
+	    if [ $$code -eq 0 ]; then \
+	        printf "  PASS  %s -> %d\n" "$$(basename $$f)" "$$code"; \
+	        pass=$$((pass+1)); \
+	    else \
+	        printf "  FAIL  %s -> %d (expected 0)\n" "$$(basename $$f)" "$$code"; \
+	        fail=$$((fail+1)); \
+	    fi; \
+	done; \
+	echo ""; \
+	echo "=== INVALID samples (expect exit 1 or 2) ==="; \
+	for f in tests/fixtures/invalid/*.bun; do \
+	    ./bun_parser "$$f" > /dev/null 2>&1; \
+	    code=$$?; \
+	    if [ $$code -eq 1 ] || [ $$code -eq 2 ]; then \
+	        printf "  PASS  %s -> %d\n" "$$(basename $$f)" "$$code"; \
+	        pass=$$((pass+1)); \
+	    else \
+	        printf "  FAIL  %s -> %d (expected 1 or 2)\n" "$$(basename $$f)" "$$code"; \
+	        fail=$$((fail+1)); \
+	    fi; \
+	done; \
+	echo ""; \
+	echo "=== TOTAL: $$pass pass / $$fail fail ==="; \
+	[ $$fail -eq 0 ]
 
 clean:
 	rm -f bun_parser tests/test_runner *.o
