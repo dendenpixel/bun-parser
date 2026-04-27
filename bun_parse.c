@@ -442,6 +442,15 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
         return BUN_UNSUPPORTED;
     }
 
+    #define BUN_MAX_RECORDS 1000000u   // 1M records = 56 MB in memory
+
+    if (header->asset_count > BUN_MAX_RECORDS) {
+        add_violationf(ctx,
+            "asset_count %u exceeds parser limit %u",
+            header->asset_count, BUN_MAX_RECORDS);
+        return BUN_UNSUPPORTED;   // not malformed — file may be valid, we just won't load it
+    }
+    
     ctx->records = calloc(header->asset_count, sizeof(BunAssetRecord));
     if (!ctx->records) return BUN_ERR_IO;
     ctx->record_count = header->asset_count;
