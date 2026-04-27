@@ -47,4 +47,4 @@ fixtures:
 	@echo "Regenerated fixtures in tests/fixtures/{valid,invalid}/"
 
 clean:
-	-rm bun_parser tests/test_runner *.o
+	rm -f bun_parser tests/test_runner *.o
