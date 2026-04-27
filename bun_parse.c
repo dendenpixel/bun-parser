@@ -7,6 +7,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "bun.h"
 #include "bun_string_table.h"
@@ -67,6 +68,7 @@ static void add_violationf(BunParseContext *ctx, const char *fmt, ...) {
 }
 
 // Escalate worst-result-so-far. MALFORMED beats UNSUPPORTED beats OK.
+// IO errors are not ranked within, caller returns on BUN_ERR_IO early.
 static void escalate(bun_result_t *status, bun_result_t new_status) {
     if (new_status == BUN_MALFORMED) {
         *status = BUN_MALFORMED;
@@ -88,6 +90,7 @@ static int safe_seek(FILE *f, u64 pos) {
 bun_result_t bun_open(const char *path, BunParseContext *ctx) {
     ctx->file = fopen(path, "rb");
     if (!ctx->file) {
+        if (errno == ENOENT) return BUN_ERR_NOT_FOUND;
         return BUN_ERR_IO;
     }
 
@@ -103,7 +106,7 @@ bun_result_t bun_open(const char *path, BunParseContext *ctx) {
         ctx->file = NULL;
         return BUN_ERR_IO;
     }
-    ctx->file_size = (u64)sz;   // TODO: widen to u64 once header path also uses u64
+    ctx->file_size = (u64)sz;
 
     rewind(ctx->file);
     return BUN_OK;
@@ -227,8 +230,9 @@ bun_result_t bun_parse_header(BunParseContext *ctx, BunHeader *header) {
             (unsigned long long)header->data_section_size);
         escalate(&worst, BUN_MALFORMED);
     }
-
-    // TODO (header owner): 9.2 sections within file bounds, 9.3 no overlap.
+    
+// Spec 9.2: all sections must fit within the file.
+// Spec 9.3: no two sections may overlap.
     u64 fsize = ctx->file_size;
     u64 asset_table_size = (u64)header->asset_count * (u64)BUN_ASSET_RECORD_SIZE;
     if (header->asset_table_offset > fsize || asset_table_size > fsize - header->asset_table_offset) {
@@ -415,6 +419,10 @@ static bun_result_t read_record_bytes(BunParseContext *ctx,
     }
     u64 pos = header->asset_table_offset + row;
 
+    // Bounds-check the record before reading. We have already checked the 
+    // entire table against the file size, but check again at the record level
+    // to get precise violation messages.
+
     if (pos > UINT64_MAX - BUN_ASSET_RECORD_SIZE ||
         pos + BUN_ASSET_RECORD_SIZE > ctx->file_size) {
         add_violationf(ctx,
@@ -450,6 +458,14 @@ bun_result_t bun_parse_assets(BunParseContext *ctx, const BunHeader *header) {
     }
 
     if (header->asset_count == 0) return BUN_OK;
+
+    #define BUN_MAX_RECORDS 1000000u
+    if (header->asset_count > BUN_MAX_RECORDS) {
+        add_violationf(ctx,
+            "asset_count %u exceeds parser limit %u (DoS protection)",
+            header->asset_count, BUN_MAX_RECORDS);
+        return BUN_UNSUPPORTED;
+    }
 
     ctx->records = calloc(header->asset_count, sizeof(BunAssetRecord));
     if (!ctx->records) return BUN_ERR_IO;

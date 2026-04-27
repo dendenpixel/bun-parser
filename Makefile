@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -std=c11 -Wall -Wextra -Wpedantic
+CFLAGS  = -std=c11 -Wall -Wextra -Wpedantic -D_POSIX_C_SOURCE=200809L
 
 # Flags passed to the linker. You will likely need to define this if you use
 # additional libraries.

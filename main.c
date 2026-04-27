@@ -3,7 +3,8 @@
 
 #include "bun.h"
 #include "bun_string_table.h"
-
+#include "bun_data.h"
+ 
 // Print all violations collected so far (used on every exit path so the
 // user sees what went wrong, regardless of which stage failed).
 static void print_violations(const BunParseContext *ctx) {
@@ -25,16 +26,14 @@ static void print_header(const BunHeader *h) {
     printf("reserved             = %llu\n",   (unsigned long long)h->reserved);
 }
 
-static void print_asset(size_t i, const BunAssetRecord *r,
-                        char *const *names, size_t name_count) {
+static bun_result_t print_asset(size_t i, BunParseContext *ctx,
+                                const BunHeader *header,
+                                const BunAssetRecord *r,
+                                char *const *names, size_t name_count) {
     printf("\n=== Asset %zu ===\n", i);
 
-    // Name comes from the string-table module. Until that module exists,
-    // names may be NULL or the array itself may be NULL.
-    const char *name = "(pending string-table module)";
-    if (names && i < name_count && names[i]) {
-        name = names[i];
-    }
+    const char *name = "(name unreadable)";
+    if (names && i < name_count && names[i]) name = names[i];
     printf("  name              = %s\n", name);
 
     printf("  name_offset       = %u\n",   r->name_offset);
@@ -46,6 +45,22 @@ static void print_asset(size_t i, const BunAssetRecord *r,
     printf("  type              = %u\n",   r->type);
     printf("  checksum          = 0x%08x\n", r->checksum);
     printf("  flags             = 0x%08x\n", r->flags);
+
+    // Process + preview the data section for this asset.
+    BunAssetDataResult dres = {0};
+    bun_result_t dr = bun_process_asset_data(ctx, header, r, &dres);
+    if (dr != BUN_OK) {
+        fprintf(stderr, "violation: asset[%zu]: %s\n", i, dres.error);
+        return dr;
+    }
+    printf("  data_preview      = ");
+    if (dres.is_printable) {
+        printf("\"%.*s\"\n", (int)dres.preview_len, dres.preview);
+    } else {
+        for (size_t k = 0; k < dres.preview_len; k++) printf("%02x ", dres.preview[k]);
+        printf("\n");
+    }
+    return BUN_OK;
 }
 
 int main(int argc, char *argv[]) {
@@ -60,7 +75,11 @@ int main(int argc, char *argv[]) {
 
     bun_result_t result = bun_open(path, &ctx);
     if (result != BUN_OK) {
-        fprintf(stderr, "Error: could not open '%s'\n", path);
+        if (result == BUN_ERR_NOT_FOUND) {
+            fprintf(stderr, "Error: file not found: '%s'\n", path);
+        } else {
+            fprintf(stderr, "Error: could not open '%s'\n", path);
+        }
         return result;
     }
 
@@ -98,7 +117,13 @@ int main(int argc, char *argv[]) {
 
     print_header(&header);
     for (size_t i = 0; i < ctx.record_count; i++) {
-        print_asset(i, &ctx.records[i], ctx.names, ctx.record_count);
+        bun_result_t dr = print_asset(i, &ctx, &header, &ctx.records[i], ctx.names, ctx.record_count);
+        // Track worst result. MALFORMED beats UNSUPPORTED beats OK.
+        if (dr == BUN_MALFORMED) {
+            result = BUN_MALFORMED;
+        } else if (dr == BUN_UNSUPPORTED && result == BUN_OK) {
+            result = BUN_UNSUPPORTED;
+        }
     }
 
     bun_close(&ctx);

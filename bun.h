@@ -8,9 +8,9 @@ typedef enum {
     BUN_OK          = 0,
     BUN_MALFORMED   = 1,
     BUN_UNSUPPORTED = 2,
-    BUN_ERR_IO      = 3,   /* I/O error or file not found -- additional codes
-                              in the range 3-10 may be added; document them
-                              in the report */
+    BUN_ERR_IO      = 3,
+    BUN_ERR_NOT_FOUND = 4, // Added for file not found error, distinct from other IO errors.
+
 } bun_result_t;
 
 //

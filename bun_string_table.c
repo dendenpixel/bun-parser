@@ -102,9 +102,7 @@ bun_result_t bun_validate_asset_name(
     // (The header validator should guarantee string_table_offset +
     // string_table_size <= file_size, but we check here so this function
     // is safe to call independently.)
-    if (ctx->file_size < 0) {
-        return BUN_ERR_IO;
-    }
+
     u64 file_end = file_offset + (u64)record->name_length;
     if (file_end > (u64)ctx->file_size) {
         return BUN_MALFORMED;
