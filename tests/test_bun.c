@@ -387,7 +387,8 @@ START_TEST(test_header_string_table_past_eof) {
     // Should have at least one violation explaining what failed.
     ck_assert_uint_gt(ctx.n_violations, 0);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
@@ -413,7 +414,8 @@ START_TEST(test_header_sections_overlap) {
     ck_assert_int_eq(r, BUN_MALFORMED);
     ck_assert_uint_gt(ctx.n_violations, 0);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
@@ -441,7 +443,8 @@ START_TEST(test_header_adjacent_sections_ok) {
     // Header is otherwise valid, so this must be OK (no overlap violation).
     ck_assert_int_eq(r, BUN_OK);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
@@ -469,7 +472,8 @@ START_TEST(test_header_overflow_safe) {
     bun_result_t r = bun_parse_header(&ctx, &header);
     ck_assert_int_eq(r, BUN_MALFORMED);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
@@ -508,7 +512,8 @@ START_TEST(test_dos_cap_excessive_asset_count) {
     // refuse before calloc().
     ck_assert_ptr_eq(ctx.records, NULL);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
@@ -533,19 +538,21 @@ END_TEST
 // ============================================================
 
 START_TEST(test_data_preview_printable_uncompressed) {
-    // Layout (all offsets in bytes):
+    // Layout (all offsets in bytes). Spec section 4.1 requires every
+    // section offset and size to be divisible by 4, so we pad the
+    // string table (5 -> 8 bytes) and data section (11 -> 12 bytes).
     //   [0,   60): header
     //   [60, 108): one 48-byte asset record
-    //   [108, 113): string table containing "asset"
-    //   [113, 124): data section containing "hello world"
-    static u8 buf[124];
+    //   [108, 116): string table -- "asset" (5 bytes) + 3 padding bytes
+    //   [116, 128): data section -- "hello world" (11 bytes) + 1 padding byte
+    static u8 buf[128];
     memset(buf, 0, sizeof(buf));
 
     const u64 asset_table_offset  = 60;
     const u64 string_table_offset = 108;
-    const u64 string_table_size   = 5;
-    const u64 data_section_offset = 113;
-    const u64 data_section_size   = 11;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 12;
 
     build_header(buf, BUN_MAGIC, 1, 0,
                  /*asset_count*/        1,
@@ -588,20 +595,27 @@ START_TEST(test_data_preview_printable_uncompressed) {
     // memcmp + ck_assert_int_eq is portable and gives the same guarantee.
     ck_assert_int_eq(memcmp(dres.preview, "hello world", 11), 0);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
 
 // Same end-to-end shape, but with binary (non-printable) data.
 START_TEST(test_data_preview_binary_uncompressed) {
-    static u8 buf[124];
+    // Same 4-byte alignment rules as above. data_section_size of 4 is
+    // already aligned; only the string table needs padding (5 -> 8).
+    //   [0,   60): header
+    //   [60, 108): one 48-byte asset record
+    //   [108, 116): string table -- "asset" + 3 padding bytes
+    //   [116, 120): data section -- 4 bytes of binary
+    static u8 buf[120];
     memset(buf, 0, sizeof(buf));
 
     const u64 asset_table_offset  = 60;
     const u64 string_table_offset = 108;
-    const u64 string_table_size   = 5;
-    const u64 data_section_offset = 113;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
     const u64 data_section_size   = 4;
 
     build_header(buf, BUN_MAGIC, 1, 0,
@@ -639,7 +653,8 @@ START_TEST(test_data_preview_binary_uncompressed) {
     ck_assert_uint_eq(dres.preview_len, 4);
     ck_assert_int_eq(dres.is_printable, 0);
 
-    fclose(f);
+    // bun_close() handles fclose(ctx->file), so don't fclose(f) separately
+    // -- that would be a double-free on the same FILE*.
     bun_close(&ctx);
 }
 END_TEST
