@@ -34,9 +34,11 @@ tests/test_runner: $(TEST) $(LIB)
 # every invalid sample must exit 1 (MALFORMED) or 2 (UNSUPPORTED).
 # Returns non-zero if any file produces an unexpected exit code.
 samples-test: bun_parser
+	@mkdir -p tests/fixtures/valid tests/fixtures/invalid
 	@echo "=== VALID samples (expect exit 0) ==="; \
 	pass=0; fail=0; \
 	for f in tests/fixtures/valid/*.bun; do \
+	    [ -e "$$f" ] || continue; \
 	    ./bun_parser "$$f" > /dev/null 2>&1; \
 	    code=$$?; \
 	    if [ $$code -eq 0 ]; then \
@@ -50,6 +52,7 @@ samples-test: bun_parser
 	echo ""; \
 	echo "=== INVALID samples (expect exit 1 or 2) ==="; \
 	for f in tests/fixtures/invalid/*.bun; do \
+	    [ -e "$$f" ] || continue; \
 	    ./bun_parser "$$f" > /dev/null 2>&1; \
 	    code=$$?; \
 	    if [ $$code -eq 1 ] || [ $$code -eq 2 ]; then \
