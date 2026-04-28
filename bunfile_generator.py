@@ -639,6 +639,212 @@ def build_invalid_16_rle_truncated(path):
         f.write(rle_data)
         write_padding(f, data_section_size - len(rle_data))
 
+def build_invalid_17_name_offset_overflow(path):
+    """name_offset + name_length overflows u32 (spec 9.5 + integer safety)."""
+    payload = b"data"
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = 8
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = _align4(len(payload))
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0xFFFFFFFE, name_length=0xFFFFFFFE,
+            data_offset=0, data_size=len(payload))
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        write_padding(f, string_table_size)
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(payload)
+        write_padding(f, data_section_size - len(payload))
+
+def build_invalid_18_data_offset_overflow(path):
+    """data_offset + data_size wraps in u64 (spec 9.5 + integer safety)."""
+    name = b"x"
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = _align4(len(name))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = 4
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0, name_length=len(name),
+            data_offset=0xFFFFFFFFFFFFFFFE, data_size=100)
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        f.write(name)
+        write_padding(f, string_table_size - len(name))
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(b"\x00" * data_section_size)
+
+def build_invalid_19_unknown_flag(path):
+    """Unknown flag bit set (spec 5.1.7)."""
+    name = b"flagged"
+    payload = b"data"
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = _align4(len(name))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = _align4(len(payload))
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0, name_length=len(name),
+            data_offset=0, data_size=len(payload),
+            flags=0x4)   # bit 2 -- unknown
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        f.write(name)
+        write_padding(f, string_table_size - len(name))
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(payload)
+        write_padding(f, data_section_size - len(payload))
+
+def build_invalid_20_nonzero_checksum(path):
+    """Non-zero CRC-32 checksum (spec 5.1.6)."""
+    name = b"crc"
+    payload = b"data"
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = _align4(len(name))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = _align4(len(payload))
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0, name_length=len(name),
+            data_offset=0, data_size=len(payload),
+            checksum=0xDEADBEEF)
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        f.write(name)
+        write_padding(f, string_table_size - len(name))
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(payload)
+        write_padding(f, data_section_size - len(payload))
+
+def build_invalid_21_zlib_compression(path):
+    """zlib compression -- optional, return UNSUPPORTED (spec 5.1.3)."""
+    name = b"zlib"
+    fake_zlib_payload = bytes([0x78, 0x9C, 0x01, 0x02, 0x03, 0x04])  # 6 bytes
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = _align4(len(name))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = _align4(len(fake_zlib_payload))
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0, name_length=len(name),
+            data_offset=0, data_size=len(fake_zlib_payload),
+            uncompressed_size=100,
+            compression=COMPRESS_ZLIB)   # compression = 2
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        f.write(name)
+        write_padding(f, string_table_size - len(name))
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(fake_zlib_payload)
+        write_padding(f, data_section_size - len(fake_zlib_payload))
+
+def build_invalid_22_unknown_compression(path):
+    """Unknown compression value (spec 5.1.3)."""
+    name = b"unk"
+    payload = b"data"
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = _align4(len(name))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = _align4(len(payload))
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0, name_length=len(name),
+            data_offset=0, data_size=len(payload),
+            uncompressed_size=10,
+            compression=99)   # not 0/1/2
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        f.write(name)
+        write_padding(f, string_table_size - len(name))
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(payload)
+        write_padding(f, data_section_size - len(payload))
+
+def build_invalid_23_uncompressed_with_size(path):
+    """compression=0 but uncompressed_size != 0 (spec 5.1 note 1)."""
+    name = b"x"
+    payload = b"data"
+    asset_table_offset  = _align4(HEADER_SIZE)
+    string_table_offset = _align4(asset_table_offset + RECORD_SIZE)
+    string_table_size   = _align4(len(name))
+    data_section_offset = _align4(string_table_offset + string_table_size)
+    data_section_size   = _align4(len(payload))
+
+    with open(path, "wb") as f:
+        write_header(f,
+            asset_count=1,
+            asset_table_offset=asset_table_offset,
+            string_table_offset=string_table_offset,
+            string_table_size=string_table_size,
+            data_section_offset=data_section_offset,
+            data_section_size=data_section_size)
+        write_padding(f, asset_table_offset - HEADER_SIZE)
+        write_asset_record(f,
+            name_offset=0, name_length=len(name),
+            data_offset=0, data_size=len(payload),
+            uncompressed_size=999,   # nonzero is illegal when compression=0
+            compression=0)
+        write_padding(f, string_table_offset - (asset_table_offset + RECORD_SIZE))
+        f.write(name)
+        write_padding(f, string_table_size - len(name))
+        write_padding(f, data_section_offset - (string_table_offset + string_table_size))
+        f.write(payload)
+        write_padding(f, data_section_size - len(payload))
 
 # ============= REGISTRY =============
 
@@ -668,6 +874,13 @@ INVALID_FIXTURES = [
     ("14-rle-zero-count.bun",                  build_invalid_14_rle_zero_count),
     ("15-rle-bomb.bun",                        build_invalid_15_rle_bomb),
     ("16-rle-truncated.bun",                   build_invalid_16_rle_truncated),
+    ("17-name-offset-overflow.bun",            build_invalid_17_name_offset_overflow),
+    ("18-data-offset-overflow.bun",            build_invalid_18_data_offset_overflow),
+    ("19-unknown-flag.bun",                    build_invalid_19_unknown_flag),
+    ("20-nonzero-checksum.bun",                build_invalid_20_nonzero_checksum),
+    ("21-zlib-compression.bun",                build_invalid_21_zlib_compression),
+    ("22-unknown-compression.bun",             build_invalid_22_unknown_compression),
+    ("23-uncompressed-with-size.bun",          build_invalid_23_uncompressed_with_size),
 ]
 
 
