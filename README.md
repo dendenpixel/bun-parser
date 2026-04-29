@@ -25,7 +25,6 @@ the spec and collects all violations before exiting.
 | Teammate C | -   | teammate-c        |
 | Teammate A         | -   | teammate-a             |
 | Teammate B       | -   | teammate-b   |
-| Former member          | -   | former-member         |
 
 ## Building
 
