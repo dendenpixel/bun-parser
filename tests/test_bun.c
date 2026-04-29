@@ -156,6 +156,180 @@ START_TEST(test_unsupported_version) {
 }
 END_TEST
 
+START_TEST(test_header_file_too_short) {
+    u8 buf[10] = {0}; // 10 bytes, not even close to the 60 expected.
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_header_misaligned_offset) {
+    u8 buf[200] = {0};
+    // string_table_offset = 62, which is not divisible by 4.
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 61,
+                 /*string_table_offset*/64,
+                 /*string_table_size*/  0,
+                 /*data_section_offset*/64,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+
+START_TEST(test_header_misaligned_size) {
+    u8 buf[200] = {0};
+    // string_table_size = 62, which is not divisible by 4.
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 60,
+                 /*string_table_offset*/60,
+                 /*string_table_size*/  5,
+                 /*data_section_offset*/68,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+
+START_TEST(test_edge_zero_size_offset_slip) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 0xFFFFFFF0, // huge but still % 4 valid offset.
+                 /*string_table_offset*/60,
+                 /*string_table_size*/  0,
+                 /*data_section_offset*/60,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+    
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_combo_magic_n_version) {
+    u8 buf[60];
+    build_header(buf, 0xDEADBEEF, 99, 255, // both magic and version are wrong
+                 0, 60, 60, 0, 60, 0, 0);
+    
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED); // MALFORMED should take precedence over UNSUPPORTED
+    ck_assert_uint_ge(ctx.n_violations, 2); // Should have at least 2 violations: one for bad magic, one for bad version
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_section_overlaps_header) {
+    u8 buf[200] = {0};
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 60,
+                 /*string_table_offset*/28,
+                 /*string_table_size*/  40,   // [28, 68) overlaps [0, 60)
+                 /*data_section_offset*/68,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+    
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_all_zero_fields) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 0,  // "inside" header, but size=0
+                 /*string_table_offset*/0,
+                 /*string_table_size*/  0,
+                 /*data_section_offset*/0,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+
+    FILE *f = fmemopen(buf, 60, "rb");
+    BunParseContext ctx = { .file = f, .file_size = 60 };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_version_minor_nonzero) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC,
+                 1, 255,   // major=1 is correct; minor=255 is not
+                 0, 60, 60, 0, 60, 0, 0);
+
+    FILE *f = fmemopen(buf, 60, "rb");
+    BunParseContext ctx = { .file = f, .file_size = 60 };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_UNSUPPORTED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_reserved_nonzero) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 0, 60, 60, 0, 60, 0,
+                 /*reserved*/ UINT64_MAX);
+
+    FILE *f = fmemopen(buf, 60, "rb");
+    BunParseContext ctx = { .file = f, .file_size = 60 };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    ck_assert_uint_eq(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
 // ============================================================
 // String-table tests
 //
@@ -994,210 +1168,6 @@ END_TEST
 
 
 
-
-
-
-
-
-
-
-// ============================================================
-// Header edge-case tests (originally added by Aman on amanTesting).
-// Cover file-too-short, 4-byte alignment violations on offsets and
-// sizes, large-but-valid offsets when size is zero, multi-violation
-// escalation order, sections overlapping the header, all-zero header
-// fields, version 1.x where x != 0, and non-zero reserved field.
-// ============================================================
-
-START_TEST(test_header_file_too_short) {
-    u8 buf[10] = {0}; // 10 bytes, not even close to the 60 expected.
-
-    FILE *f = fmemopen(buf, sizeof(buf), "rb");
-    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
-    BunHeader header = {0};
-
-    bun_result_t r = bun_parse_header(&ctx, &header);
-    ck_assert_int_eq(r, BUN_MALFORMED);
-    ck_assert_uint_gt(ctx.n_violations, 0);
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_header_misaligned_offset) {
-    u8 buf[200] = {0};
-    // asset_table_offset = 61, which is not divisible by 4.
-    build_header(buf, BUN_MAGIC, 1, 0,
-                 /*asset_count*/        0,
-                 /*asset_table_offset*/ 61,
-                 /*string_table_offset*/64,
-                 /*string_table_size*/  0,
-                 /*data_section_offset*/64,
-                 /*data_section_size*/  0,
-                 /*reserved*/           0);
-
-    FILE *f = fmemopen(buf, sizeof(buf), "rb");
-    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
-    BunHeader header = {0};
-
-    bun_result_t r = bun_parse_header(&ctx, &header);
-    ck_assert_int_eq(r, BUN_MALFORMED);
-    ck_assert_uint_gt(ctx.n_violations, 0);
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_header_misaligned_size) {
-    u8 buf[200] = {0};
-    // string_table_size = 5, which is not divisible by 4.
-    build_header(buf, BUN_MAGIC, 1, 0,
-                 /*asset_count*/        0,
-                 /*asset_table_offset*/ 60,
-                 /*string_table_offset*/60,
-                 /*string_table_size*/  5,
-                 /*data_section_offset*/68,
-                 /*data_section_size*/  0,
-                 /*reserved*/           0);
-
-    FILE *f = fmemopen(buf, sizeof(buf), "rb");
-    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
-    BunHeader header = {0};
-
-    bun_result_t r = bun_parse_header(&ctx, &header);
-    ck_assert_int_eq(r, BUN_MALFORMED);
-    ck_assert_uint_gt(ctx.n_violations, 0);
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_edge_zero_size_offset_slip) {
-    u8 buf[60];
-    // A huge asset_table_offset is fine when asset_count == 0, since
-    // there's no actual asset table that needs to fit at that offset.
-    build_header(buf, BUN_MAGIC, 1, 0,
-                 /*asset_count*/        0,
-                 /*asset_table_offset*/ 0xFFFFFFF0, // huge but still 4-byte aligned
-                 /*string_table_offset*/60,
-                 /*string_table_size*/  0,
-                 /*data_section_offset*/60,
-                 /*data_section_size*/  0,
-                 /*reserved*/           0);
-
-    FILE *f = fmemopen(buf, sizeof(buf), "rb");
-    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
-    BunHeader header = {0};
-
-    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_combo_magic_n_version) {
-    u8 buf[60];
-    // Both magic and version are wrong. MALFORMED (magic) must beat
-    // UNSUPPORTED (version) per the escalate() ordering.
-    build_header(buf, 0xDEADBEEF, 99, 255,
-                 0, 60, 60, 0, 60, 0, 0);
-
-    FILE *f = fmemopen(buf, sizeof(buf), "rb");
-    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
-    BunHeader header = {0};
-
-    bun_result_t r = bun_parse_header(&ctx, &header);
-    ck_assert_int_eq(r, BUN_MALFORMED);
-    ck_assert_uint_ge(ctx.n_violations, 2);   // at least one for magic, one for version
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_edge_section_overlaps_header) {
-    u8 buf[200] = {0};
-    // string_table at [28, 68) overlaps the header at [0, 60).
-    build_header(buf, BUN_MAGIC, 1, 0,
-                 /*asset_count*/        0,
-                 /*asset_table_offset*/ 60,
-                 /*string_table_offset*/28,
-                 /*string_table_size*/  40,
-                 /*data_section_offset*/68,
-                 /*data_section_size*/  0,
-                 /*reserved*/           0);
-
-    FILE *f = fmemopen(buf, sizeof(buf), "rb");
-    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
-    BunHeader header = {0};
-
-    bun_result_t r = bun_parse_header(&ctx, &header);
-    ck_assert_int_eq(r, BUN_MALFORMED);
-    ck_assert_uint_gt(ctx.n_violations, 0);
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_edge_all_zero_fields) {
-    u8 buf[60];
-    // All offsets and sizes zero. With size=0 each section is empty,
-    // so there's no actual overlap or out-of-bounds situation.
-    build_header(buf, BUN_MAGIC, 1, 0,
-                 /*asset_count*/        0,
-                 /*asset_table_offset*/ 0,
-                 /*string_table_offset*/0,
-                 /*string_table_size*/  0,
-                 /*data_section_offset*/0,
-                 /*data_section_size*/  0,
-                 /*reserved*/           0);
-
-    FILE *f = fmemopen(buf, 60, "rb");
-    BunParseContext ctx = { .file = f, .file_size = 60 };
-    BunHeader header = {0};
-
-    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_edge_version_minor_nonzero) {
-    u8 buf[60];
-    // major=1 is correct; minor=255 is not. Spec says version must be
-    // exactly 1.0; otherwise UNSUPPORTED.
-    build_header(buf, BUN_MAGIC,
-                 1, 255,
-                 0, 60, 60, 0, 60, 0, 0);
-
-    FILE *f = fmemopen(buf, 60, "rb");
-    BunParseContext ctx = { .file = f, .file_size = 60 };
-    BunHeader header = {0};
-
-    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_UNSUPPORTED);
-    ck_assert_uint_gt(ctx.n_violations, 0);
-
-    bun_close(&ctx);
-}
-END_TEST
-
-START_TEST(test_edge_reserved_nonzero) {
-    u8 buf[60];
-    // Spec section 4.1.6 says reserved is ignored. Setting it to
-    // UINT64_MAX must not produce a violation.
-    build_header(buf, BUN_MAGIC, 1, 0,
-                 0, 60, 60, 0, 60, 0,
-                 /*reserved*/ UINT64_MAX);
-
-    FILE *f = fmemopen(buf, 60, "rb");
-    BunParseContext ctx = { .file = f, .file_size = 60 };
-    BunHeader header = {0};
-
-    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    ck_assert_uint_eq(ctx.n_violations, 0);
-
-    bun_close(&ctx);
-}
-END_TEST
-
 // Assemble a test suite from our tests
 
 static Suite *bun_suite(void) {
@@ -1208,6 +1178,15 @@ static Suite *bun_suite(void) {
     tcase_add_test(tc_header, test_valid_minimal);
     tcase_add_test(tc_header, test_bad_magic);
     tcase_add_test(tc_header, test_unsupported_version);
+    tcase_add_test(tc_header, test_header_file_too_short);
+    tcase_add_test(tc_header, test_header_misaligned_offset);
+    tcase_add_test(tc_header, test_header_misaligned_size);
+    tcase_add_test(tc_header, test_edge_zero_size_offset_slip);
+    tcase_add_test(tc_header, test_combo_magic_n_version);
+    tcase_add_test(tc_header, test_edge_section_overlaps_header);
+    tcase_add_test(tc_header, test_edge_all_zero_fields);
+    tcase_add_test(tc_header, test_edge_version_minor_nonzero);
+    tcase_add_test(tc_header, test_edge_reserved_nonzero);
     suite_add_tcase(s, tc_header);
 
     TCase *tc_strtab = tcase_create("string-table-tests");
@@ -1247,33 +1226,17 @@ static Suite *bun_suite(void) {
     suite_add_tcase(s, tc_data);
 
     TCase *tc_data_section = tcase_create("data-section-tests");
-    tcase_set_timeout(tc_data_section, 60); // 60s timeout for large file test
-    tcase_add_test(tc_data_section, test_data_rle_valid);
-    tcase_add_test(tc_data_section, test_data_zlib_unsupported);
-    tcase_add_test(tc_data_section, test_data_nonzero_checksum);
-    tcase_add_test(tc_data_section, test_data_unknown_flags);
-    tcase_add_test(tc_data_section, test_data_rle_odd_size);
-    tcase_add_test(tc_data_section, test_data_rle_zero_count);
-    tcase_add_test(tc_data_section, test_data_rle_size_mismatch);
-    tcase_add_test(tc_data_section, test_data_uncompressed_bad_size);
-    tcase_add_test(tc_data_section, test_data_large_file);
+    tcase_set_timeout(tc_data, 60); // 60 second timeout for large file test
+    tcase_add_test(tc_data, test_data_rle_valid);
+    tcase_add_test(tc_data, test_data_zlib_unsupported);
+    tcase_add_test(tc_data, test_data_nonzero_checksum);
+    tcase_add_test(tc_data, test_data_unknown_flags);
+    tcase_add_test(tc_data, test_data_rle_odd_size);
+    tcase_add_test(tc_data, test_data_rle_zero_count);
+    tcase_add_test(tc_data, test_data_rle_size_mismatch);
+    tcase_add_test(tc_data, test_data_uncompressed_bad_size);
+    tcase_add_test(tc_data, test_data_large_file) ;
     suite_add_tcase(s, tc_data_section);
-
-    // Header edge-case tests (formerly on the duplicate root-level
-    // test_bun.c). 9 tests covering file-too-short, alignment, large
-    // offsets with zero size, multi-violation escalation, header
-    // overlaps, all-zero fields, version minor, and reserved field.
-    TCase *tc_header_edge = tcase_create("header-edge-tests");
-    tcase_add_test(tc_header_edge, test_header_file_too_short);
-    tcase_add_test(tc_header_edge, test_header_misaligned_offset);
-    tcase_add_test(tc_header_edge, test_header_misaligned_size);
-    tcase_add_test(tc_header_edge, test_edge_zero_size_offset_slip);
-    tcase_add_test(tc_header_edge, test_combo_magic_n_version);
-    tcase_add_test(tc_header_edge, test_edge_section_overlaps_header);
-    tcase_add_test(tc_header_edge, test_edge_all_zero_fields);
-    tcase_add_test(tc_header_edge, test_edge_version_minor_nonzero);
-    tcase_add_test(tc_header_edge, test_edge_reserved_nonzero);
-    suite_add_tcase(s, tc_header_edge);
 
     return s;
 }
