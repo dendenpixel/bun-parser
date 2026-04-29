@@ -5,3 +5,5 @@
 bun_parser
 tests/test_runner
 *.bun
+# ...except the small, committed test fixtures used by tests/test_bun.c.
+!tests/fixtures/**/*.bun
