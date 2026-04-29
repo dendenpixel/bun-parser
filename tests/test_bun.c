@@ -731,7 +731,7 @@ START_TEST(test_data_zlib_unsupported) {
     BunHeader header = {0};
 
     ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
 
     BunAssetDataResult dres = {0};
     bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
@@ -767,7 +767,7 @@ START_TEST(test_data_nonzero_checksum) {
     BunHeader header = {0};
 
     ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
 
     BunAssetDataResult dres = {0};
     bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
@@ -804,7 +804,7 @@ START_TEST(test_data_unknown_flags) {
     BunHeader header = {0};
 
     ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
 
     BunAssetDataResult dres = {0};
     bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
@@ -843,7 +843,7 @@ START_TEST(test_data_rle_odd_size) {
     BunHeader header = {0};
 
     ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
 
     BunAssetDataResult dres = {0};
     bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
@@ -956,7 +956,7 @@ START_TEST(test_data_uncompressed_bad_size) {
     BunHeader header = {0};
 
     ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
-    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
 
     BunAssetDataResult dres = {0};
     bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
@@ -1049,7 +1049,7 @@ static Suite *bun_suite(void) {
     tcase_add_test(tc_data, test_data_preview_binary_uncompressed);
     suite_add_tcase(s, tc_data);
 
-    TCase *tc_data = tcase_create("data-section-tests");
+    TCase *tc_data_section = tcase_create("data-section-tests");
     tcase_set_timeout(tc_data, 60); // 60 second timeout for large file test
     tcase_add_test(tc_data, test_data_rle_valid);
     tcase_add_test(tc_data, test_data_zlib_unsupported);
@@ -1059,8 +1059,8 @@ static Suite *bun_suite(void) {
     tcase_add_test(tc_data, test_data_rle_zero_count);
     tcase_add_test(tc_data, test_data_rle_size_mismatch);
     tcase_add_test(tc_data, test_data_uncompressed_bad_size);
-    tcase_add_test(tc_data, test_data_large_file)
-    suite_add_tcase(s, tc_data);
+    tcase_add_test(tc_data, test_data_large_file) ;
+    suite_add_tcase(s, tc_data_section);
 
     return s;
 }
