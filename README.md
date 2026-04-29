@@ -1,5 +1,34 @@
-# BUN parser
+# BUN Parser — Group [N]
 
-(replace with your own content. The README.md serves as an introduction to
-users of your software. The URL of your version control repository would
-be a good thing to include.)
+A C11 parser for the BUN (Binary UNified assets) game asset bundle format.
+
+## Group members
+- Teammate B (-) — GitHub: @teammate-b
+- Dennis Quek (-) — GitHub: @dendenpixel
+- Teammate C (-) — GitHub: @teammate-c
+- Teammate A (-) — GitHub: @teammate-a
+
+## Repository
+https://github.com/teammate-b/Project
+
+## Build
+    make all
+
+Produces `./bun_parser` in the project root.
+
+## Run
+    ./bun_parser path/to/file.bun
+
+Valid files: header + all asset records printed to stdout, exit 0.  
+Invalid files: violations on stderr, partial output on stdout, exit 1 or 2.
+
+## Test
+    make test         # unit tests (libcheck)
+    make samples-test # end-to-end against all fixture files
+
+## Exit codes
+0 — OK  
+1 — malformed (spec violation)  
+2 — unsupported feature  
+3 — I/O error or wrong number of arguments  
+4 — file not found
