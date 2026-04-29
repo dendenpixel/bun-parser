@@ -156,6 +156,180 @@ START_TEST(test_unsupported_version) {
 }
 END_TEST
 
+START_TEST(test_header_file_too_short) {
+    u8 buf[10] = {0}; // 10 bytes, not even close to the 60 expected.
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_header_misaligned_offset) {
+    u8 buf[200] = {0};
+    // string_table_offset = 62, which is not divisible by 4.
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 61,
+                 /*string_table_offset*/64,
+                 /*string_table_size*/  0,
+                 /*data_section_offset*/64,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+
+START_TEST(test_header_misaligned_size) {
+    u8 buf[200] = {0};
+    // string_table_size = 62, which is not divisible by 4.
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 60,
+                 /*string_table_offset*/60,
+                 /*string_table_size*/  5,
+                 /*data_section_offset*/68,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+
+START_TEST(test_edge_zero_size_offset_slip) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 0xFFFFFFF0, // huge but still % 4 valid offset.
+                 /*string_table_offset*/60,
+                 /*string_table_size*/  0,
+                 /*data_section_offset*/60,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+    
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_combo_magic_n_version) {
+    u8 buf[60];
+    build_header(buf, 0xDEADBEEF, 99, 255, // both magic and version are wrong
+                 0, 60, 60, 0, 60, 0, 0);
+    
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED); // MALFORMED should take precedence over UNSUPPORTED
+    ck_assert_uint_ge(ctx.n_violations, 2); // Should have at least 2 violations: one for bad magic, one for bad version
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_section_overlaps_header) {
+    u8 buf[200] = {0};
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 60,
+                 /*string_table_offset*/28,
+                 /*string_table_size*/  40,   // [28, 68) overlaps [0, 60)
+                 /*data_section_offset*/68,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+    
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    bun_result_t r = bun_parse_header(&ctx, &header);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_all_zero_fields) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 /*asset_count*/        0,
+                 /*asset_table_offset*/ 0,  // "inside" header, but size=0
+                 /*string_table_offset*/0,
+                 /*string_table_size*/  0,
+                 /*data_section_offset*/0,
+                 /*data_section_size*/  0,
+                 /*reserved*/           0);
+
+    FILE *f = fmemopen(buf, 60, "rb");
+    BunParseContext ctx = { .file = f, .file_size = 60 };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_version_minor_nonzero) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC,
+                 1, 255,   // major=1 is correct; minor=255 is not
+                 0, 60, 60, 0, 60, 0, 0);
+
+    FILE *f = fmemopen(buf, 60, "rb");
+    BunParseContext ctx = { .file = f, .file_size = 60 };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_UNSUPPORTED);
+    ck_assert_uint_gt(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+START_TEST(test_edge_reserved_nonzero) {
+    u8 buf[60];
+    build_header(buf, BUN_MAGIC, 1, 0,
+                 0, 60, 60, 0, 60, 0,
+                 /*reserved*/ UINT64_MAX);
+
+    FILE *f = fmemopen(buf, 60, "rb");
+    BunParseContext ctx = { .file = f, .file_size = 60 };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    ck_assert_uint_eq(ctx.n_violations, 0);
+
+    bun_close(&ctx);
+}
+END_TEST
 // ============================================================
 // String-table tests
 //
@@ -659,6 +833,341 @@ START_TEST(test_data_preview_binary_uncompressed) {
 }
 END_TEST
 
+// ============================================================
+// Data-section tests
+
+// Valid RLE
+START_TEST(test_data_rle_valid) {
+    // RLE encode "AAABBBCCCCDD" -> pairs: (3,A)(3,B)(4,C)(2,D)
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    u8 rle_data[] = { 3, 'A', 3, 'B', 4, 'C', 2, 'D' };
+    u64 rle_size  = sizeof(rle_data);
+    u64 raw_size  = 3 + 3 + 4 + 2; // 12
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 60; // align4(rle_size)
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    build_record(buf + 60, 0, 5, 0, rle_size, raw_size, 1, 0, 0, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, rle_data, rle_size);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_OK);
+    ck_assert_uint_eq(dres.preview_len, 12);
+    ck_assert_int_eq(dres.is_printable, 1);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+
+//z-lib -> BUN_UNSUPPORTED
+
+START_TEST(test_data_zlib_unsupported) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 8;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    // compression = 2 (zlib), uncompressed_size = 10
+    build_record(buf + 60, 0, 5, 0, 4, 10, 2, 0, 0, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_UNSUPPORTED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+// non-zero checksum -> BUN_UNSUPPORTED
+START_TEST(test_data_nonzero_checksum) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 8;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    // checksum = 0xDEADBEEF (non-zero)
+    build_record(buf + 60, 0, 5, 0, 4, 0, 0, 0, 0xDEADBEEF, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, "test", 4);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_UNSUPPORTED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+// Unknown flag -> BUN_UNSUPPORTED
+
+START_TEST(test_data_unknown_flags) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 8;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    // flags = 0xFF — bits beyond 0x1 and 0x2 are set
+    build_record(buf + 60, 0, 5, 0, 4, 0, 0, 0, 0, 0xFF);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, "test", 4);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_UNSUPPORTED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+// RLE odd size -> BUN _MALFORMED
+START_TEST(test_data_rle_odd_size) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    // 3 bytes of RLE data - odd, not valid
+    u8 rle_data[] = { 3, 'A', 2 };
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 4;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    // data_size = 3 (odd), compression = 1 (RLE)
+    build_record(buf + 60, 0, 5, 0, 3, 5, 1, 0, 0, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, rle_data, sizeof(rle_data));
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+// RLE zero count pair -> BUN_MALFORMED
+START_TEST(test_data_rle_zero_count) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    // (3, 'A') valid, (0, 'B') invalid
+    u8 rle_data[] = { 3, 'A', 0, 'B' };
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 4;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    build_record(buf + 60, 0, 5, 0, 4, 3, 1, 0, 0, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, rle_data, sizeof(rle_data));
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+// RLE Size Mismatch -> BUN_Malformed
+START_TEST(test_data_rle_size_mismatch) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    // (3, 'A')(3, 'B') -> decompresses to 6 bytes
+    u8 rle_data[] = { 3, 'A', 3, 'B' };
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 4;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    // uncompressed_size = 999, but actual decompressed size = 6
+    build_record(buf + 60, 0, 5, 0, 4, 999, 1, 0, 0, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, rle_data, sizeof(rle_data));
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+//Uncompressed with non-zero uncompressed_size → BUN_MALFORMED
+START_TEST(test_data_uncompressed_bad_size) {
+    static u8 buf[176];
+    memset(buf, 0, sizeof(buf));
+
+    const u64 asset_table_offset  = 60;
+    const u64 string_table_offset = 108;
+    const u64 string_table_size   = 8;
+    const u64 data_section_offset = 116;
+    const u64 data_section_size   = 8;
+
+    build_header(buf, BUN_MAGIC, 1, 0, 1,
+                 asset_table_offset, string_table_offset, string_table_size,
+                 data_section_offset, data_section_size, 0);
+
+    // compression = 0 but uncompressed_size = 99 (should be 0)
+    build_record(buf + 60, 0, 5, 0, 4, 99, 0, 0, 0, 0);
+
+    memcpy(buf + string_table_offset, "asset", 5);
+    memcpy(buf + data_section_offset, "test", 4);
+
+    FILE *f = fmemopen(buf, sizeof(buf), "rb");
+    BunParseContext ctx = { .file = f, .file_size = sizeof(buf) };
+    BunHeader header = {0};
+
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    bun_parse_assets(&ctx, &header);
+
+    BunAssetDataResult dres = {0};
+    bun_result_t r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_MALFORMED);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+//Large file
+START_TEST(test_data_large_file) {
+    // This test requires a pre-generated large bun file.
+    // Generate it with: python3 tests/generate_large_bun.py
+    // It is not included in the submission zip.
+    const char *path = "tests/fixtures/large/large_650mb.bun";
+
+    BunParseContext ctx = {0};
+    bun_result_t r = bun_open(path, &ctx);
+    if (r != BUN_OK) {
+        // File not present -- skip rather than fail
+        return;
+    }
+
+    BunHeader header = {0};
+    ck_assert_int_eq(bun_parse_header(&ctx, &header), BUN_OK);
+    ck_assert_int_eq(bun_parse_assets(&ctx, &header), BUN_OK);
+
+    BunAssetDataResult dres = {0};
+    r = bun_process_asset_data(&ctx, &header, &ctx.records[0], &dres);
+    ck_assert_int_eq(r, BUN_OK);
+
+    bun_close(&ctx);
+}
+END_TEST
+
+
+
 // Assemble a test suite from our tests
 
 static Suite *bun_suite(void) {
@@ -669,6 +1178,15 @@ static Suite *bun_suite(void) {
     tcase_add_test(tc_header, test_valid_minimal);
     tcase_add_test(tc_header, test_bad_magic);
     tcase_add_test(tc_header, test_unsupported_version);
+    tcase_add_test(tc_header, test_header_file_too_short);
+    tcase_add_test(tc_header, test_header_misaligned_offset);
+    tcase_add_test(tc_header, test_header_misaligned_size);
+    tcase_add_test(tc_header, test_edge_zero_size_offset_slip);
+    tcase_add_test(tc_header, test_combo_magic_n_version);
+    tcase_add_test(tc_header, test_edge_section_overlaps_header);
+    tcase_add_test(tc_header, test_edge_all_zero_fields);
+    tcase_add_test(tc_header, test_edge_version_minor_nonzero);
+    tcase_add_test(tc_header, test_edge_reserved_nonzero);
     suite_add_tcase(s, tc_header);
 
     TCase *tc_strtab = tcase_create("string-table-tests");
@@ -706,6 +1224,19 @@ static Suite *bun_suite(void) {
     tcase_add_test(tc_data, test_data_preview_printable_uncompressed);
     tcase_add_test(tc_data, test_data_preview_binary_uncompressed);
     suite_add_tcase(s, tc_data);
+
+    TCase *tc_data_section = tcase_create("data-section-tests");
+    tcase_set_timeout(tc_data, 60); // 60 second timeout for large file test
+    tcase_add_test(tc_data, test_data_rle_valid);
+    tcase_add_test(tc_data, test_data_zlib_unsupported);
+    tcase_add_test(tc_data, test_data_nonzero_checksum);
+    tcase_add_test(tc_data, test_data_unknown_flags);
+    tcase_add_test(tc_data, test_data_rle_odd_size);
+    tcase_add_test(tc_data, test_data_rle_zero_count);
+    tcase_add_test(tc_data, test_data_rle_size_mismatch);
+    tcase_add_test(tc_data, test_data_uncompressed_bad_size);
+    tcase_add_test(tc_data, test_data_large_file) ;
+    suite_add_tcase(s, tc_data_section);
 
     return s;
 }
