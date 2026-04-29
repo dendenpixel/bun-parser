@@ -1,6 +1,6 @@
 # Contributor's guide
 
-Technical notes for students working on this codebase.
+Technical notes on this codebase.
 
 ## Repository layout
 
@@ -8,20 +8,20 @@ Technical notes for students working on this codebase.
 bun.h                  Shared types, on-disk structs, result codes, public API
 bun_parse.c            File open/close; header and asset-table parsing
 bun_string_table.c/h   String-table validation and name population
-bun_data.c/h           Asset data reading and RLE decompression (not yet in Makefile LIB)
-main.c                 CLI entry point; formats and prints output
+bun_data.c/h           Asset data reading and RLE decompression 
+main.c                 CLI entry point, formats and prints output
 test_bun.c             libcheck test suite (move to tests/ before running make test)
 bunfile_generator.py   Python helper for generating test fixtures
 Makefile               Build rules
-setup.sh               Dependency installation (apt/git clone only)
 ```
 
 ## Building
 
 ```
-make              # produces ./bun_parser
-make test         # builds and runs tests/test_runner (requires libcheck)
-make clean        # removes binaries and object files
+make 
+make test
+make samples-test
+
 ```
 
 Enable sanitizers during development by uncommenting the relevant line in the Makefile:
@@ -30,15 +30,10 @@ Enable sanitizers during development by uncommenting the relevant line in the Ma
 CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer -g
 ```
 
-Do not leave sanitizers enabled in a submission build — they affect performance.
-
 ## Running tests
 
 The Makefile expects the test source at `tests/test_bun.c`. Before running `make test`:
-
-1. Create the `tests/` directory and move `test_bun.c` into it.
-2. Place sample BUN files under `tests/fixtures/valid/` and `tests/fixtures/invalid/`.
-3. Run from the project root: `make test`
+1. Run from the project root: `make`
 
 ## Architecture
 
@@ -63,6 +58,7 @@ No parsing function prints anything. They only append to `ctx->violations` and r
 | `BUN_MALFORMED` | 1 | Structural spec violation |
 | `BUN_UNSUPPORTED` | 2 | Feature not implemented |
 | `BUN_ERR_IO` | 3 | I/O error or file not found |
+| `BUN_ERR_NOT_FOUND` | 4 | fopen failed with errno == ENOENT |
 
 Use the `escalate()` helper (in `bun_parse.c`) to promote a running worst-result: `MALFORMED` beats `UNSUPPORTED` beats `OK`. Never downgrade a result once escalated.
 
@@ -83,6 +79,7 @@ All offset arithmetic that could overflow must be guarded explicitly:
 
 - Promote `u32` operands to `u64` before addition.
 - Check `a > UINT64_MAX - b` before computing `a + b` on `u64` values.
+- For `a * b` on `u64`, check `(a * b) / a == b` after the multiplication (used in the asset table sizing in `bun_parse_header` and `bun_parse_assets`). 
 - Use `safe_seek` (wraps `fseeko`) when seeking to a `u64` offset; it rejects values that exceed `INT64_MAX`.
 
 ### Violation messages
