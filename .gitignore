@@ -5,3 +5,10 @@
 bun_parser
 tests/test_runner
 *.bun
+
+# OS-specific junk
+.DS_Store        # macOS Finder metadata
+Thumbs.db        # Windows Explorer thumbnails
+desktop.ini     # Windows folder settings
+.idea/           # JetBrains IDE config
+.vscode/         # VS Code workspace settings
