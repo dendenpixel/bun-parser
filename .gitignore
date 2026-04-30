@@ -5,5 +5,14 @@
 bun_parser
 tests/test_runner
 *.bun
-# ...except the small, committed test fixtures used by tests/test_bun.c.
-!tests/fixtures/**/*.bun
+
+# macOS Finder metadata
+.DS_Store
+# Windows Explorer thumbnails
+Thumbs.db
+# Windows folder settings
+desktop.ini
+# JetBrains IDE config
+.idea/
+# VS Code workspace settings
+.vscode/
