@@ -57,7 +57,7 @@ No parsing function prints anything. They only append to `ctx->violations` and r
 | `BUN_OK` | 0 | Valid |
 | `BUN_MALFORMED` | 1 | Structural spec violation |
 | `BUN_UNSUPPORTED` | 2 | Feature not implemented |
-| `BUN_ERR_IO` | 3 | I/O error or file not found |
+| `BUN_ERR_IO` | 3 | I/O error |
 | `BUN_ERR_NOT_FOUND` | 4 | fopen failed with errno == ENOENT |
 
 Use the `escalate()` helper (in `bun_parse.c`) to promote a running worst-result: `MALFORMED` beats `UNSUPPORTED` beats `OK`. Never downgrade a result once escalated.
