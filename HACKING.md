@@ -20,7 +20,6 @@ Makefile               Build rules
 ```
 make 
 make test
-make samples-test
 
 ```
 
